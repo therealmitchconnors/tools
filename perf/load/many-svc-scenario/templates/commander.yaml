@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: client-commander
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  annotations:
+  name: client-commander-read
+  resourceVersion: "378"
+  uid: a59ac79e-3e6a-46cb-b6c4-6990cf9517d0
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pod-reader-all-namespaces
+subjects:
+- kind: ServiceAccount
+  name: client-commander
+  namespace: default
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fortio-commander
+spec:
+  replicas: 1 # tells deployment to run 1 pod(s) matching the template
+  selector:
+    matchLabels:
+      app: fortio-commander
+  template: # create pods using pod definition in this template
+    metadata:
+      annotations:
+        prometheus.io/path: /fortio/debug/metrics
+        prometheus.io/port: "8080"
+      # a unique name is generated from the deployment name
+      labels:
+        app: fortio-commander
+    spec:
+      serviceAccount: client-commander
+      containers:
+      - name: fortio-client
+        image: therealmitchconnors/fortio-commander:latest
+        imagePullPolicy: Always # IfNotPresent when using explicit version tag (not "latest") [but we do use latest/latest_release in some cases]
+        ports:
+        - containerPort: 8080 # main serving port
+        command:
+        - fortio
+        - server
+          # - /bin/bash
+          # - "-c"
+          # - "fortio server -timeout 30s -M \"5554$(kubectl get pods -l app=fortio-client --all-namespaces -o 'jsonpath={range .items[*]}{\" http://\"}{.status.podIP}{\":8080/\"}{end}')\""
+# TODO: how to get podIPs for all clients?
+#          - -sync
+#          - https://storage.googleapis.com:443/fortio-data?prefix=fortio.istio.io/
+#          - -sync-interval
+#          - 15m # sync every 15 minutes
+        volumeMounts:
+          - mountPath: /var/lib/fortio
+            name: fortio-data
+          - mountPath: /var/lib/commander-scripts
+            name: commander-scripts
+      nodeSelector:
+        size: large
+      tolerations:
+      - key: "client"
+        operator: "Exists"
+        effect: "NoSchedule"
+      volumes:
+        - name: fortio-data
+          emptyDir:
+            medium: Memory
+        - name: commander-scripts
+          configMap:
+            defaultMode: 365
+            name: client-script
+          
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: client-script
+data:
+{{ (.Files.Glob "files/*").AsConfig | indent 2 }}

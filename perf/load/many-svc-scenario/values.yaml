@@ -1,0 +1,16 @@
+serviceGraphImage: gcr.io/istio-testing/isotope:0.0.3
+serviceName: loadservice
+scalerange: 20
+requestSize: 128B
+responseSize: 10KiB
+replicas: 60
+resources:
+  requests:
+    cpu: 50m
+readinessProbe:
+  httpGet:
+    path: /metrics
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 5
+httpPortName: http-web

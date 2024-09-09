@@ -1,0 +1,8 @@
+defaults:
+  pilot:
+    nodeSelector:
+      size: large
+    tolerations:
+    - key: "client"
+      operator: "Exists"
+      effect: "NoSchedule"

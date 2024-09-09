@@ -1,0 +1,243 @@
+{{- $rawcount := int .Values.serviceCount | required ".Values.serviceCount is required." -}}
+{{- $count := add 1 $rawcount | int -}}
+{{- $start := default 1 .Values.start }}
+{{- range $index := untilStep $start $count 1 }}
+{{- $suffix := printf "%03d" $index }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    scenario: many-svc
+    istio.io/dataplane-mode: {{ $.Values.dataplaneMode | required ".Values.dataplaneMode is required." }}
+    config-group: "{{ $index | mod 3 }}"
+    policy-group: "{{ $index | mod 3 }}"
+  name: ns-{{ $suffix }}
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: service-graph
+    avgscale: "{{ $.Values.replicas }}"
+    scalerange: "{{ $.Values.scalerange }}"
+  name: {{ $.Values.serviceName }}
+  namespace: ns-{{ $suffix }}
+spec:
+  replicas: {{ $.Values.replicas }}
+  selector:
+    matchLabels:
+      app: {{ $.Values.serviceName }}
+  template:
+    metadata:
+      labels:
+        app: {{ $.Values.serviceName }}
+    spec:
+      containers:
+      - args:
+        - --max-idle-connections-per-host=32
+        lifecycle:
+          preStop:
+            exec:
+              command: # Do not shut the application down immediately
+                - "sleep"
+                - "10s"
+        env:
+        - name: SERVICE_NAME
+          value: {{ $.Values.serviceName }}
+        image: {{ $.Values.serviceGraphImage }}
+        name: mock-service
+        ports:
+        - containerPort: 8080
+        resources: {{ toJson $.Values.resources }}
+        volumeMounts:
+        - mountPath: /etc/config
+          name: config-volume
+      volumes:
+      - configMap:
+          items:
+          - key: service-graph
+            path: service-graph.yaml
+          name: service-graph-config
+        name: config-volume
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: service-graph
+  name: {{ $.Values.serviceName }}
+  namespace: ns-{{ $suffix }}
+spec:
+  ports:
+  - name: {{ $.Values.httpPortName }}
+    port: 8080
+  selector:
+    app: {{ $.Values.serviceName }}
+
+---
+
+apiVersion: v1
+data:
+  service-graph: |
+    services:
+    - name: {{ $.Values.serviceName }}
+      numReplicas: {{ $.Values.replicas }}
+      responseSize: {{ $.Values.responseSize }}
+      type: http
+kind: ConfigMap
+metadata:
+  labels:
+    app: service-graph
+  name: service-graph-config
+  namespace: ns-{{ $suffix }}
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fortio-client-deployment
+  namespace: ns-{{ $suffix }}
+  labels:
+    app: fortio-client
+spec:
+  replicas: 1 # tells deployment to run 1 pod(s) matching the template
+  selector:
+    matchLabels:
+      app: fortio-client
+  template: # create pods using pod definition in this template
+    metadata:
+      annotations:
+        prometheus.io/path: /fortio/debug/metrics
+        prometheus.io/port: "8080"
+      # a unique name is generated from the deployment name
+      labels:
+        app: fortio-client
+    spec:
+      containers:
+      - name: fortio-client
+        image: fortio/fortio:latest
+        imagePullPolicy: Always # IfNotPresent when using explicit version tag (not "latest") [but we do use latest/latest_release in some cases]
+        ports:
+        - containerPort: 8080 # main serving port
+        args:
+          - server
+          - -config-dir
+          - /etc/fortio/
+          - -echo-debug-path
+          - /fortio/debug/
+#          - -sync
+#          - https://storage.googleapis.com:443/fortio-data?prefix=fortio.istio.io/
+#          - -sync-interval
+#          - 15m # sync every 15 minutes
+        volumeMounts:
+          - mountPath: /var/lib/fortio
+            name: fortio-data
+      nodeSelector:
+        size: large
+      tolerations:
+      - key: "client"
+        operator: "Exists"
+        effect: "NoSchedule"
+      volumes:
+        - name: fortio-data
+          emptyDir:
+            medium: Memory
+---
+
+{{ if $.Values.ciliumL4 }}
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: cilium-l4
+  namespace: ns-{{ $suffix }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app: service-graph
+  ingress:
+  - fromEndpoints:
+    - matchLabels:
+        app: fortio-client
+    toPorts:
+    - ports:
+      - port: "8080"
+        protocol: TCP
+---
+{{ end }}
+{{ if $.Values.ciliumL7 }}
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: cilium-l7
+  namespace: ns-{{ $suffix }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app: service-graph
+  ingress:
+  - fromEndpoints:
+    - matchLabels:
+        app: fortio-client
+    toPorts:
+    - ports:
+      - port: "8080"
+        protocol: TCP
+      rules:
+        http:
+        - method: "GET"
+          path: "/"
+---
+{{ end }}
+{{ if $.Values.istioL7 }}
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: ciliumL7
+  namespace: ns-{{ $suffix }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app: service-graph
+  ingress:
+  - fromEndpoints:
+    - matchLabels:
+        app: fortio-client
+    toPorts:
+    - ports:
+      - port: "8080"
+        protocol: TCP
+      rules:
+        http:
+        - method: "GET"
+          path: "/"
+---
+
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: ciliumL7-egress
+  namespace: ns-{{ $suffix }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app: fortio-client
+  egress:
+  - toEndpoints:
+    - matchLabels:
+        app: service-graph
+    toPorts:
+    - ports:
+      - port: "8080"
+        protocol: TCP
+      rules:
+        http:
+        - method: "GET"
+          path: "/"
+---
+{{ end }}
+{{ end }}

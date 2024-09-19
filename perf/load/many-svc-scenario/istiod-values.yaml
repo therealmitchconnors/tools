@@ -6,3 +6,8 @@ defaults:
     - key: "client"
       operator: "Exists"
       effect: "NoSchedule"
+    autoscaleMax: 10
+# global:
+#   hub: mcr.microsoft.com/oss/istio
+# env:
+# - ZTUNNEL_WORKER_THREADS: "32"

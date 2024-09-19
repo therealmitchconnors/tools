@@ -1,0 +1,6 @@
+kind: ProxyConfig
+metadata:
+  name: my-proxyconfig
+  namespace: istio-system
+spec:
+  concurrency: 0

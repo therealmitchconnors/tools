@@ -63,7 +63,7 @@ metadata:
 spec:
   # The job takes on average 5 mins to complete, scaling 20 deployments with a 10-20s sleep in between
   # We schedule the job for every 10min, giving us 5min on/off
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:  
       deployment: scaler
@@ -99,12 +99,15 @@ spec:
             ns=$(kubectl get ns -l scenario=many-svc -o name | sed 's/namespace\///g' | shuf -n 1 -)
             configgroup=$(kubectl get namespace $ns -o jsonpath='{.metadata.labels.config-group}')
             oldpolicygroup=$(kubectl get namespace $ns -o jsonpath='{.metadata.labels.policy-group}')
-            newpolicygroup=$(RANDOM%2)
-            if [$newpolicygroup -gte $oldpolicygroup]; then
-              $newpolicygroup=$newpolicygroup+1
+            if [ -z "${oldpolicygroup}" ]; then 
+              oldpolicygroup=$((RANDOM%3))
             fi
-            echo "relabeling config-group $configgroup to policy-group $newpolicygroup"
-            kubectl label ns -l config-group=$configgroup --overwrite policy-group=$newpolicygroup
+            newpolicygroup=$((RANDOM%2))
+            if ["$newpolicygroup" -gte "$oldpolicygroup"]; then
+              newpolicygroup=$((newpolicygroup+1))
+            fi
+            echo "relabeling $ns to policy-group $newpolicygroup"
+            kubectl label ns $ns --overwrite policy-group=$newpolicygroup
           done
       serviceAccountName: config-change-service-account
 ---

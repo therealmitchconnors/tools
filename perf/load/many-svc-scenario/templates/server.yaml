@@ -1,6 +1,6 @@
 {{- $rawcount := int .Values.serviceCount | required ".Values.serviceCount is required." -}}
 {{- $count := add 1 $rawcount | int -}}
-{{- $start := default 1 .Values.start }}
+{{- $start := default 1 .Values.start | int }}
 {{- range $index := untilStep $start $count 1 }}
 {{- $suffix := printf "%03d" $index }}
 apiVersion: v1
@@ -8,13 +8,14 @@ kind: Namespace
 metadata:
   labels:
     scenario: many-svc
-    istio.io/dataplane-mode: {{ $.Values.dataplaneMode | required ".Values.dataplaneMode is required." }}
-    config-group: "{{ $index | mod 3 }}"
-    policy-group: "{{ $index | mod 3 }}"
-  name: ns-{{ $suffix }}
-
+    "istio.io/dataplane-mode": {{ $.Values.dataplaneMode | required ".Values.dataplaneMode is required." }}
+    config-group: "{{ mod $index 3 }}"
+    policy-group: "{{ mod $index 3 }}"
+    {{ if $.Values.istioL7 -}}
+    istio.io/use-waypoint: waypoint
+    {{- end }}
+  name: "ns-{{ $suffix }}"
 ---
-
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -158,7 +159,7 @@ metadata:
 spec:
   endpointSelector:
     matchLabels:
-      app: service-graph
+      app: {{ $.Values.serviceName }}
   ingress:
   - fromEndpoints:
     - matchLabels:
@@ -178,7 +179,7 @@ metadata:
 spec:
   endpointSelector:
     matchLabels:
-      app: service-graph
+      app: {{ $.Values.serviceName }}
   ingress:
   - fromEndpoints:
     - matchLabels:
@@ -193,51 +194,58 @@ spec:
           path: "/"
 ---
 {{ end }}
-{{ if $.Values.istioL7 }}
-apiVersion: "cilium.io/v2"
-kind: CiliumNetworkPolicy
+{{ if $.Values.istioL4 }}
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
 metadata:
-  name: ciliumL7
+  name: tcp-policy
   namespace: ns-{{ $suffix }}
 spec:
-  endpointSelector:
+  selector:
     matchLabels:
-      app: service-graph
-  ingress:
-  - fromEndpoints:
-    - matchLabels:
-        app: fortio-client
-    toPorts:
-    - ports:
-      - port: "8080"
-        protocol: TCP
-      rules:
-        http:
-        - method: "GET"
-          path: "/"
+      app: {{ $.Values.serviceName }}
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["ns-{{ $suffix }}"]
+  - to:
+    - operation:
+        ports: ["8080"]
 ---
-
-apiVersion: "cilium.io/v2"
-kind: CiliumNetworkPolicy
+{{ end }}
+{{ if $.Values.istioL7 }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
 metadata:
-  name: ciliumL7-egress
+  name: waypoint
   namespace: ns-{{ $suffix }}
 spec:
-  endpointSelector:
-    matchLabels:
-      app: fortio-client
-  egress:
-  - toEndpoints:
-    - matchLabels:
-        app: service-graph
-    toPorts:
-    - ports:
-      - port: "8080"
-        protocol: TCP
-      rules:
-        http:
-        - method: "GET"
-          path: "/"
+  gatewayClassName: istio-waypoint
+  listeners:
+  - name: mesh
+    port: 15008
+    protocol: HBONE
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: tcp-policy
+  namespace: ns-{{ $suffix }}
+spec:
+  targetRefs:
+  - name: waypoint
+    kind: Gateway
+    group: gateway.networking.k8s.io
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        namespaces: ["ns-{{ $suffix }}"]
+    to:
+    - operation:
+        ports: ["8080"]
+        methods: ["GET"]
 ---
 {{ end }}
 {{ end }}

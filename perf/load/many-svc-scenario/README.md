@@ -1,7 +1,7 @@
 To reproduce my scalability tests, first create a cluster named 'testcluster' using the following commands (for tests not involving Azure CNI w/ cilium, omit the --network-dataplane parameter):
 
 ```
-az aks create -g mitch-delete-oct24 -n testcluster --tier standard --network-plugin azure --network-plugin-mode overlay --network-dataplane cilium --pod-cidrs 10.128.0.0/10 --node-vm-size Standard_D8ds_v5 
+az aks create -g mitch-delete-oct24 -n testcluster --tier standard --network-plugin azure --network-plugin-mode overlay --pod-cidrs 10.128.0.0/10 --node-vm-size Standard_D8ds_v5 
 az aks nodepool add -g mitch-delete-oct24 --cluster-name testcluster -n clientpool -s "Standard_D32ds_v5" --labels size=large --node-taints client=true:NoSchedule -c 100
 az aks nodepool add -g mitch-delete-oct24 --cluster-name testcluster -n serverpool -s "Standard_D8ds_v5" --labels size=small,group=1 -c 900
 ```
